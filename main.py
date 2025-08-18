@@ -6,59 +6,75 @@ app = FastAPI()
 class TextoRequest(BaseModel):
     texto: str
 
-def gerar_relatorio_executivo(texto: str) -> str:
-    # Simulação de geração de relatório preditivo completo com base no texto
-    # Em produção, aqui seria feita uma chamada a um modelo de linguagem (LLM)
-    
-    # Seções do relatório
-    status_geral = "✅ Status Geral:\nO projeto está em andamento com desempenho moderado. Indicadores sugerem atenção preventiva."
-    
-    diagnostico = (
-        "🔍 Diagnóstico de Performance:\n"
-        "CPI indica custo acima do planejado. SPI mostra atraso no cronograma. "
-        "Avanço físico e financeiro estão próximos, mas abaixo da meta. "
-        "Contrato por preço unitário exige controle rigoroso. Risco médio identificado."
-    )
-    
-    impactos = (
-        "📈 Projeção de Impactos:\n"
-        "Possíveis atrasos de até 2 meses e acréscimos de custo de 5 a 10%. "
-        "Impacto operacional moderado e risco de comprometimento de metas estratégicas."
-    )
-    
-    recomendacoes = (
-        "🎯 Recomendações Estratégicas:\n"
-        "Revisar cronograma e renegociar entregas. Estabelecer metas de CPI > 0.95 e SPI > 0.98. "
-        "Aumentar supervisão e comunicação entre áreas envolvidas."
-    )
-    
-    pilares_eck = (
-        "🏛️ Avaliação de Pilar ECK:\n"
-        "O projeto se enquadra no Pilar K (Alocação de Capital), pois visa reforço de infraestrutura com impacto direto na geração de valor. "
-        "Também contribui para Pilar E (Excelência Organizacional) ao exigir alinhamento entre áreas. "
-        "Não se enquadra diretamente no Pilar C (Foco no Cliente), pois não há interface direta com o consumidor final."
-    )
-    
-    conclusao = (
-        "🧠 Conclusão Executiva:\n"
-        "O projeto apresenta riscos moderados e oportunidades de melhoria. "
-        "Recomenda-se foco em capital e excelência organizacional para garantir entrega com eficiência e valor estratégico."
-    )
-    
-    relatorio = (
-        f"{status_geral}\n\n"
-        f"{diagnostico}\n\n"
-        f"{impactos}\n\n"
-        f"{recomendacoes}\n\n"
-        f"{pilares_eck}\n\n"
-        f"{conclusao}"
-    )
-    
-    return relatorio
-
 @app.post("/analisar-projeto-texto")
 async def analisar_projeto_texto(payload: TextoRequest):
     texto = payload.texto
-    relatorio = gerar_relatorio_executivo(texto)
+
+    # Simulação de interpretação avançada do texto
+    # Extração de dados básicos
+    nome_projeto = "Projeto não identificado"
+    cpi = spi = fisico = financeiro = contrato = stakeholders = observacoes = pilar = "Não informado"
+
+    linhas = texto.splitlines()
+    for linha in linhas:
+        if "Nome do Projeto" in linha:
+            nome_projeto = linha.split(":", 1)[-1].strip()
+        elif "CPI" in linha:
+            cpi = linha.split(":", 1)[-1].strip()
+        elif "SPI" in linha:
+            spi = linha.split(":", 1)[-1].strip()
+        elif "Avanço Físico" in linha:
+            fisico = linha.split(":", 1)[-1].strip()
+        elif "Avanço Financeiro" in linha:
+            financeiro = linha.split(":", 1)[-1].strip()
+        elif "Tipo de Contrato" in linha:
+            contrato = linha.split(":", 1)[-1].strip()
+        elif "Stakeholders" in linha:
+            stakeholders = linha.split(":", 1)[-1].strip()
+        elif "Observações" in linha:
+            observacoes = linha.split(":", 1)[-1].strip()
+        elif "Pilar" in linha:
+            pilar = linha.split(":", 1)[-1].strip()
+
+    # Geração do relatório formatado
+    relatorio = f"""📊 Relatório Executivo Preditivo – Projeto “{nome_projeto}”
+
+✅ Status Geral
+CPI (Índice de Desempenho de Custo): {cpi}
+SPI (Índice de Desempenho de Cronograma): {spi}
+Avanço Físico: {fisico}
+Avanço Financeiro: {financeiro}
+Tipo de Contrato: {contrato}
+Stakeholders: {stakeholders}
+Status Atual: Em andamento, com risco identificado.
+Observação: {observacoes}
+
+📈 Diagnóstico de Performance
+Custo: CPI em {cpi} indica necessidade de atenção ao controle orçamentário.
+Prazo: SPI em {spi} sugere atraso no cronograma.
+Execução Física/Financeira: Avanço físico ({fisico}) e financeiro ({financeiro}) indicam progresso moderado.
+Contrato: Tipo de contrato "{contrato}" requer atenção à gestão de escopo e custos.
+Risco: Avaliação baseada nas observações indica risco relevante.
+
+📅 Projeção de Impactos
+Curto Prazo: Possibilidade de atrasos adicionais e pressão sobre custos.
+Médio Prazo: Potencial impacto na entrega e metas estratégicas.
+Stakeholders: {stakeholders} devem intensificar monitoramento e comunicação.
+
+🧭 Recomendações Estratégicas
+Revisar cronograma e renegociar entregas.
+Estabelecer metas de CPI ≥ 0.90 e SPI ≥ 0.95.
+Reforçar integração entre áreas e controle de produtividade.
+
+🏛 Avaliação de Pilar ECK
+Pilar declarado: {pilar}
+
+Justificativa:
+O projeto apresenta características que podem se enquadrar em múltiplos pilares. A classificação como "{pilar}" deve ser avaliada considerando os objetivos estratégicos, disciplina financeira e eficiência organizacional.
+
+✅ Resumo Executivo Final
+O Projeto “{nome_projeto}” apresenta riscos moderados e oportunidades de melhoria. Recomenda-se foco estratégico no Pilar "{pilar}" com ações corretivas para garantir entrega com eficiência e valor.
+"""
+
     return {"conclusao_executiva": relatorio}
 
