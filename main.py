@@ -4,11 +4,19 @@ from typing import Optional, Dict, Any, List
 import unicodedata
 import html
 
-app = FastAPI(title="Vera Estratégica API", version="1.2.0")
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Vera Estratégica API - v1.3.0 (Kaio)
+# - Divergência de Pilar: declarado x sugerido (inferido)
+# - Duas opções de Próximos Passos: (Recomendado) e (Atual/declarado)
+# - Seção "Riscos-chave identificados" (bullets claros)
+# - Retorno compatível com A360: conclusao_executiva (TXT) + MD + HTML
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-# ---------------------------------------------
+app = FastAPI(title="Vera Estratégica API", version="1.3.0")
+
+# -------------------------------------------------------------------------
 # Models
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 class TextoRequest(BaseModel):
     texto: str
 
@@ -23,10 +31,9 @@ class ProjetoRequest(BaseModel):
     observacoes: Optional[str] = None
     pilar: Optional[str] = None
 
-
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 # Helpers de normalização e parsing
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 def normalize(s: Optional[str]) -> str:
     if not s:
         return ""
@@ -93,10 +100,9 @@ def parse_from_text(texto: str) -> Dict[str, str]:
             campos[rotulos[r_norm]] = valor.strip()
     return campos
 
-
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 # Heurísticas: risco, pilar e próximos passos
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 def calcular_score_risco(campos_num: Dict[str, Optional[float]], observacoes: str, trace: List[str]) -> float:
     score = 0.0
     cpi = campos_num.get("cpi_num")
@@ -128,12 +134,11 @@ def calcular_score_risco(campos_num: Dict[str, Optional[float]], observacoes: st
 
     # Palavras-chave em observações
     obs_norm = normalize(observacoes)
-    keywords = ["atraso", "licenca", "licenca", "embargo", "paralis", "fornecedor", "pressao", "custo", "multas", "sancao", "risco", "equipamento", "critico"]
+    keywords = ["atraso", "licenca", "embargo", "paralis", "fornecedor", "pressao", "custo", "multas", "sancao", "risco", "equipamento", "critico"]
     pontos = sum(1 for k in keywords if k in obs_norm)
     if pontos > 0:
         add = min(4, pontos)
         score += add; trace.append(f"Keywords em observações (+{add})")
-
     return score
 
 def classificar_risco(score: float) -> str:
@@ -150,15 +155,21 @@ def inferir_pilar(campos: Dict[str, str], campos_num: Dict[str, Optional[float]]
     cpi = campos_num.get("cpi_num")
     spi = campos_num.get("spi_num")
 
+    # Observações de cliente/atendimento
     if any(k in obs for k in ["reclamacao", "qualidade", "satisfacao", "experiencia", "atendimento", "sla", "cliente"]):
         trace.append("ECK→Foco no Cliente (observações de experiência/atendimento)")
         return "Foco no Cliente"
+
+    # Observações de capital/retorno
     if any(k in obs for k in ["orcamento", "capex", "investimento", "priorizacao", "retorno", "payback", "vpl", "tir"]):
         trace.append("ECK→Alocação Estratégica de Capital (observações de CAPEX/retorno)")
         return "Alocação Estratégica de Capital"
+
+    # Métricas abaixo do alvo
     if (cpi is not None and cpi < 0.90) or (spi is not None and spi < 0.95):
         trace.append("ECK→Excelência Organizacional (desempenho abaixo do target)")
         return "Excelência Organizacional"
+
     return None
 
 def justificativa_pilar_eck(pilar: str) -> str:
@@ -169,7 +180,7 @@ def justificativa_pilar_eck(pilar: str) -> str:
     if "cliente" in p:
         return ("Foco no Cliente: colocar o cliente no centro, entender necessidades, antecipar soluções "
                 "e melhorar continuamente as jornadas com confiabilidade e SLAs.")
-    if "alocacao" in p or "alocação" in p:
+    if "alocacao" in p:
         return ("Alocação Estratégica de Capital: priorizar investimentos que maximizem valor no longo prazo, "
                 "com disciplina de capital e seleção criteriosa de oportunidades (VPL/TIR ajustadas a risco).")
     return f"Pilar declarado: {pilar}"
@@ -177,8 +188,8 @@ def justificativa_pilar_eck(pilar: str) -> str:
 def split_stakeholders(stakeholders: str) -> List[str]:
     if not stakeholders or stakeholders == "Não informado":
         return []
-    parts = []
-    for sep in [";", ",", "|"]:
+    parts: List[str] = []
+    for sep in [";", ",", "\n", "|"]:
         if sep in stakeholders:
             parts = [p.strip() for p in stakeholders.split(sep)]
             break
@@ -188,7 +199,7 @@ def split_stakeholders(stakeholders: str) -> List[str]:
 
 def gerar_proximos_passos(cpi: Optional[float], spi: Optional[float], gap_pf: Optional[float],
                           obs: str, pilar_final: str, stakeholders: str) -> List[str]:
-    passos = []
+    passos: List[str] = []
     # Base em CPI/SPI
     if cpi is not None and cpi < 0.90:
         passos.append("Estabelecer plano de contenção de custos e variação de escopo (D+7).")
@@ -210,7 +221,6 @@ def gerar_proximos_passos(cpi: Optional[float], spi: Optional[float], gap_pf: Op
         passos.append("Ativar plano de contingência para equipamentos críticos e alternativas logísticas (D+7).")
     if "licenc" in obs_n or "embargo" in obs_n or "paralis" in obs_n:
         passos.append("Acionar frente regulatória/jurídica para destravar licenças/embargos (D+3).")
-
     # Diretrizes por Pilar ECK
     p = normalize(pilar_final)
     if "excelencia" in p:
@@ -219,26 +229,80 @@ def gerar_proximos_passos(cpi: Optional[float], spi: Optional[float], gap_pf: Op
     if "cliente" in p:
         passos.append("Mapear jornada do cliente e ajustar SLAs de comunicação de obra (D+15).")
         passos.append("Rodar pulso de satisfação/NPS interno ao marco seguinte (D+30).")
-    if "alocacao" in p or "alocação" in p:
+    if "alocacao" in p:
         passos.append("Repriorizar CAPEX do portfólio, priorizando itens de maior retorno ajustado a risco (D+20).")
         passos.append("Revisar business case do projeto e opções de escopo/financiamento (D+30).")
-
     # Responsáveis sugeridos
     owners = split_stakeholders(stakeholders)
     if owners:
         passos.append(f"Responsáveis sugeridos: {', '.join(owners[:3])}.")
-
     # Remover duplicados mantendo ordem
-    dedup = []
+    dedup: List[str] = []
     seen = set()
-    for p in passos:
-        if p not in seen:
-            seen.add(p)
-            dedup.append(p)
+    for it in passos:
+        if it not in seen:
+            seen.add(it)
+            dedup.append(it)
     return dedup
-# ---------------------------------------------
+
+def listar_riscos(campos_num: Dict[str, Optional[float]], observacoes: str) -> List[str]:
+    """Gera lista de riscos-chave, alinhada às mesmas regras do score."""
+    riscos: List[str] = []
+    cpi = campos_num.get("cpi_num")
+    spi = campos_num.get("spi_num")
+    fis = campos_num.get("avanco_fisico_num")
+    fin = campos_num.get("avanco_financeiro_num")
+
+    if cpi is not None:
+        if cpi < 0.85:
+            riscos.append("Custo: CPI < 0,85 — forte risco de estouro orçamentário.")
+        elif cpi < 0.90:
+            riscos.append("Custo: CPI entre 0,85 e 0,90 — pressão de custos e necessidade de correções.")
+    if spi is not None:
+        if spi < 0.90:
+            riscos.append("Prazo: SPI < 0,90 — alto risco de atraso em marcos contratuais.")
+        elif spi < 0.95:
+            riscos.append("Prazo: SPI entre 0,90 e 0,95 — risco de deslizamento de cronograma.")
+    if fis is not None and fin is not None:
+        gap = abs(fis - fin)
+        if gap >= 15:
+            riscos.append("Execução: assimetria físico x financeiro ≥15pp — risco de medição/execução inconsistente.")
+        elif gap >= 8:
+            riscos.append("Execução: assimetria físico x financeiro ≥8pp — atenção à coerência de medição.")
+    obs = normalize(observacoes)
+    # Mapear palavras-chave em observações para riscos compreensíveis
+    mapping = [
+        ("atraso", "Cronograma: indícios de atraso em frentes críticas."),
+        ("licenc", "Regulatório: risco de licenças/autorizações."),
+        ("embargo", "Regulatório: risco de embargo/interdição."),
+        ("paralis", "Operação: risco de paralisação de obra/frentes."),
+        ("fornecedor", "Suprimentos: dependência de fornecedor crítico."),
+        ("pressao", "Financeiro: pressão de custos nos pacotes."),
+        ("custo", "Financeiro: tendência de aumento de custos."),
+        ("multas", "Contratual: risco de multas por descumprimento."),
+        ("sancao", "Compliance: risco de sanções."),
+        ("equip", "Técnico: risco com fornecimento de equipamentos."),
+        ("equipamento", "Técnico: risco com fornecimento de equipamentos."),
+        ("critico", "Risco crítico citado em observações (tratado como Alto)."),
+        ("risco", "Risco adicional citado em observações."),
+    ]
+    already = set()
+    for key, msg in mapping:
+        if key in obs and msg not in already:
+            already.add(msg)
+            riscos.append(msg)
+    # Dedup final
+    out: List[str] = []
+    seen = set()
+    for r in riscos:
+        if r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
+
+# -------------------------------------------------------------------------
 # Formatação (TXT, Markdown, HTML)
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 def format_report(campos: Dict[str, str],
                   campos_num: Dict[str, Optional[float]],
                   score: float,
@@ -246,8 +310,13 @@ def format_report(campos: Dict[str, str],
                   pilar_declarado: str,
                   pilar_final: str,
                   justificativa_eck_txt: str,
-                  proximos_passos: List[str],
-                  kpis: Dict[str, Any]) -> Dict[str, str]:
+                  proximos_passos_recomendado: List[str],
+                  proximos_passos_atual: List[str],
+                  kpis: Dict[str, Any],
+                  riscos_chave: List[str],
+                  divergente: bool,
+                  pilar_sugerido: Optional[str],
+                  justificativa_sugerido: Optional[str]) -> Dict[str, str]:
 
     nome = campos.get("nome_projeto", "Projeto não identificado") or "Projeto não identificado"
     cpi = campos.get("cpi", "Não informado")
@@ -261,7 +330,7 @@ def format_report(campos: Dict[str, str],
     # Emojis por risco
     risco_emoji = {"Alto": "🔴", "Médio": "🟠", "Baixo": "🟢"}.get(risco, "⚠️")
 
-    # ---------- Markdown ----------
+    # ------------------ Markdown ------------------
     md = []
     md.append(f"### 📊 Relatório Executivo Preditivo – Projeto **{nome}**")
     md.append("")
@@ -272,7 +341,7 @@ def format_report(campos: Dict[str, str],
     md.append(f"- Avanço Financeiro: **{financeiro}**")
     md.append(f"- Tipo de Contrato: **{contrato}**")
     md.append(f"- Stakeholders: **{stakeholders}**")
-    md.append(f"- Risco (classificação): **{risco} {risco_emoji}**  \n  *(score interno: {score:.1f})*")
+    md.append(f"- Risco (classificação): **{risco} {risco_emoji}** *(score interno: {score:.1f})*")
     md.append(f"- Observação: **{observacoes}**")
     md.append("")
     md.append("**📈 Diagnóstico de Performance**")
@@ -282,33 +351,55 @@ def format_report(campos: Dict[str, str],
     md.append(f"- Contrato: “{contrato}” → reforçar governança de escopo/custos.")
     if kpis.get("gap_pf") is not None:
         md.append(f"- Gap físico x financeiro: **{kpis['gap_pf']:.1f}pp**.")
+    if riscos_chave:
+        md.append("")
+        md.append("**⚠️ Riscos‑chave identificados**")
+        for r in riscos_chave:
+            md.append(f"- {r}")
     md.append("")
     md.append("**📅 Projeção de Impactos**")
     md.append("- Curto prazo: risco de novos atrasos e pressão de custos.")
     md.append("- Médio prazo: impacto em marcos contratuais e metas estratégicas.")
     md.append("- Stakeholders: intensificar monitoramento e comunicação executiva.")
     md.append("")
-    md.append("**🧭 Recomendações Estratégicas**")
+    md.append("**🧭 Recomendações Estratégicas (metas gerais)**")
     md.append("- Revisar caminho crítico e renegociar entregas críticas.")
-    md.append("- Metas-alvo: **CPI ≥ 0,90** e **SPI ≥ 0,95**.")
+    md.append("- Metas‑alvo: **CPI ≥ 0,90** e **SPI ≥ 0,95**.")
     md.append("- Integrar áreas e reforçar controle de produtividade.")
     md.append("")
     md.append("**🏛 Pilar ECK (foco estratégico)**")
-    pilar_show = pilar_declarado if pilar_declarado != "Não informado" else pilar_final
-    md.append(f"- Pilar: **{pilar_show}**")
-    md.append(f"- Justificativa: {justificativa_eck_txt}")
-    md.append("")
-    if proximos_passos:
-        md.append("**▶ Próximos Passos (propostas)**")
-        for p in proximos_passos:
-            md.append(f"- {p}")
+    if pilar_declarado != "Não informado":
+        md.append(f"- Pilar declarado: **{pilar_declarado}**")
+    if divergente and pilar_sugerido:
+        md.append(f"- Pilar sugerido (análise): **{pilar_sugerido}** ⚠️ *(recomendado realinhar)*")
+        if justificativa_sugerido:
+            md.append(f"- Justificativa (sugerido): {justificativa_sugerido}")
+        md.append(f"- Justificativa (atual): {justificativa_eck_txt}")
+    else:
+        show = pilar_declarado if pilar_declarado != "Não informado" else pilar_final
+        md.append(f"- Pilar: **{show}**")
+        md.append(f"- Justificativa: {justificativa_eck_txt}")
+
+    # Duas opções de próximos passos
+    if proximos_passos_recomendado:
         md.append("")
+        md.append("**▶ Próximos Passos — (Recomendado, alinhado ao Pilar sugerido)**")
+        for p in proximos_passos_recomendado:
+            md.append(f"- {p}")
+    if proximos_passos_atual:
+        md.append("")
+        md.append("**▶ Próximos Passos — (Atual, alinhado ao Pilar declarado)**")
+        for p in proximos_passos_atual:
+            md.append(f"- {p}")
+
+    md.append("")
     md.append("**✅ Resumo Executivo**")
+    resumo_pilar = (pilar_sugerido or pilar_final) if (divergente and pilar_sugerido) else (pilar_declarado if pilar_declarado != "Não informado" else pilar_final)
     md.append(f"O projeto **{nome}** requer atenção **{risco.lower()} {risco_emoji}**. "
-              f"Foco no pilar **{pilar_show}** e disciplina de execução para assegurar valor e entrega.")
+              f"Considerar foco no pilar **{resumo_pilar}** e disciplina de execução para assegurar valor e entrega.")
     md_report = "\n".join(md)
 
-    # ---------- Texto (para A360) ----------
+    # ------------------ Texto (para A360) ------------------
     txt_lines = [
         f"📊 Relatório Executivo Preditivo – Projeto “{nome}”",
         "",
@@ -330,6 +421,10 @@ def format_report(campos: Dict[str, str],
     ]
     if kpis.get("gap_pf") is not None:
         txt_lines.append(f"- Gap físico x financeiro: {kpis['gap_pf']:.1f}pp.")
+    if riscos_chave:
+        txt_lines += ["", "⚠️ Riscos‑chave identificados"]
+        for r in riscos_chave:
+            txt_lines.append(f"- {r}")
     txt_lines += [
         "",
         "📅 Projeção de Impactos",
@@ -337,89 +432,118 @@ def format_report(campos: Dict[str, str],
         "- Médio prazo: impacto em marcos contratuais e metas estratégicas.",
         "- Stakeholders: intensificar monitoramento e comunicação executiva.",
         "",
-        "🧭 Recomendações Estratégicas",
+        "🧭 Recomendações Estratégicas (metas gerais)",
         "- Revisar caminho crítico e renegociar entregas críticas.",
         "- Metas-alvo: CPI ≥ 0,90 e SPI ≥ 0,95.",
         "- Integrar áreas e reforçar controle de produtividade.",
         "",
         "🏛 Pilar ECK (foco estratégico)",
-        f"- Pilar: {pilar_show}",
-        f"- Justificativa: {justificativa_eck_txt}",
     ]
-    if proximos_passos:
+    if pilar_declarado != "Não informado":
+        txt_lines.append(f"- Pilar declarado: {pilar_declarado}")
+    if divergente and pilar_sugerido:
+        txt_lines.append(f"- Pilar sugerido (análise): {pilar_sugerido} ⚠️ (recomendado realinhar)")
+        if justificativa_sugerido:
+            txt_lines.append(f"- Justificativa (sugerido): {justificativa_sugerido}")
+        txt_lines.append(f"- Justificativa (atual): {justificativa_eck_txt}")
+    else:
+        show_txt = pilar_declarado if pilar_declarado != "Não informado" else pilar_final
+        txt_lines.append(f"- Pilar: {show_txt}")
+        txt_lines.append(f"- Justificativa: {justificativa_eck_txt}")
+
+    # Duas opções de próximos passos
+    if proximos_passos_recomendado:
         txt_lines.append("")
-        txt_lines.append("▶ Próximos Passos (propostas)")
-        for p in proximos_passos:
+        txt_lines.append("▶ Próximos Passos — (Recomendado, alinhado ao Pilar sugerido)")
+        for p in proximos_passos_recomendado:
             txt_lines.append(f"- {p}")
+    if proximos_passos_atual:
+        txt_lines.append("")
+        txt_lines.append("▶ Próximos Passos — (Atual, alinhado ao Pilar declarado)")
+        for p in proximos_passos_atual:
+            txt_lines.append(f"- {p}")
+
     txt_lines += [
         "",
         "✅ Resumo Executivo",
-        f"O projeto “{nome}” requer atenção {risco.lower()} {risco_emoji}. "
-        f"Foco no pilar {pilar_show} e disciplina de execução para assegurar valor e entrega."
     ]
+    resumo_pilar_txt = (pilar_sugerido or pilar_final) if (divergente and pilar_sugerido) else (pilar_declarado if pilar_declarado != "Não informado" else pilar_final)
+    txt_lines.append(
+        f"O projeto “{nome}” requer atenção {risco.lower()} {risco_emoji}. "
+        f"Considerar foco no pilar {resumo_pilar_txt} e disciplina de execução para assegurar valor e entrega."
+    )
     txt_report = "\n".join(txt_lines)
 
-    # ---------- HTML ----------
+    # ------------------ HTML ------------------
     def esc(s: str) -> str:
         return html.escape(str(s)).replace("\n", "<br/>")
 
     def li_list(items: List[str]) -> str:
         return "".join(f"<li>{esc(i)}</li>" for i in items)
 
+    riscos_html = li_list(riscos_chave) if riscos_chave else ""
+    proximos_rec_html = li_list(proximos_passos_recomendado) if proximos_passos_recomendado else ""
+    proximos_atual_html = li_list(proximos_passos_atual) if proximos_passos_atual else ""
+
     html_report = f"""
-    <h3>📊 Relatório Executivo Preditivo – Projeto “{esc(nome)}”</h3>
-    <p><strong>✅ Status Geral</strong><br/>
-    CPI: <strong>{esc(cpi)}</strong><br/>
-    SPI: <strong>{esc(spi)}</strong><br/>
-    Avanço Físico: <strong>{esc(fisico)}</strong><br/>
-    Avanço Financeiro: <strong>{esc(financeiro)}</strong><br/>
-    Tipo de Contrato: <strong>{esc(contrato)}</strong><br/>
-    Stakeholders: <strong>{esc(stakeholders)}</strong><br/>
-    Risco (classificação): <strong>{esc(risco)}</strong> {esc(risco_emoji)} (score interno: {score:.1f})<br/>
-    Observação: <strong>{esc(observacoes)}</strong></p>
+<h3>📊 Relatório Executivo Preditivo – Projeto “{esc(nome)}”</h3>
+<p><strong>✅ Status Geral</strong><br/>
+CPI: <strong>{esc(cpi)}</strong><br/>
+SPI: <strong>{esc(spi)}</strong><br/>
+Avanço Físico: <strong>{esc(fisico)}</strong><br/>
+Avanço Financeiro: <strong>{esc(financeiro)}</strong><br/>
+Tipo de Contrato: <strong>{esc(contrato)}</strong><br/>
+Stakeholders: <strong>{esc(stakeholders)}</strong><br/>
+Risco (classificação): <strong>{esc(risco)}</strong> {esc(risco_emoji)} (score interno: {score:.1f})<br/>
+Observação: <strong>{esc(observacoes)}</strong></p>
 
-    <p><strong>📈 Diagnóstico de Performance</strong></p>
-    <ul>
-      <li>Custo: CPI em {esc(cpi)} → disciplina orçamentária.</li>
-      <li>Prazo: SPI em {esc(spi)} → gestão de caminho crítico.</li>
-      <li>Execução: físico ({esc(fisico)}) vs. financeiro ({esc(financeiro)}).</li>
-      <li>Contrato: “{esc(contrato)}” → reforçar governança de escopo/custos.</li>
-      {"<li>Gap físico x financeiro: {:.1f}pp.</li>".format(kpis['gap_pf']) if kpis.get('gap_pf') is not None else ""}
-    </ul>
+<p><strong>📈 Diagnóstico de Performance</strong></p>
+<ul>
+  <li>Custo: CPI em {esc(cpi)} → disciplina orçamentária.</li>
+  <li>Prazo: SPI em {esc(spi)} → gestão de caminho crítico.</li>
+  <li>Execução: físico ({esc(fisico)}) vs. financeiro ({esc(financeiro)}).</li>
+  <li>Contrato: “{esc(contrato)}” → reforçar governança de escopo/custos.</li>
+  {f"<li>Gap físico x financeiro: {kpis['gap_pf']:.1f}pp.</li>" if kpis.get('gap_pf') is not None else ""}
+</ul>
 
-    <p><strong>📅 Projeção de Impactos</strong></p>
-    <ul>
-      <li>Curto prazo: risco de novos atrasos e pressão de custos.</li>
-      <li>Médio prazo: impacto em marcos contratuais e metas estratégicas.</li>
-      <li>Stakeholders: intensificar monitoramento e comunicação executiva.</li>
-    </ul>
+{f"<p><strong>⚠️ Riscos‑chave identificados</strong></p><ul>{riscos_html}</ul>" if riscos_html else ""}
 
-    <p><strong>🧭 Recomendações Estratégicas</strong></p>
-    <ul>
-      <li>Revisar caminho crítico e renegociar entregas críticas.</li>
-      <li>Metas-alvo: CPI ≥ 0,90 e SPI ≥ 0,95.</li>
-      <li>Integrar áreas e reforçar controle de produtividade.</li>
-    </ul>
+<p><strong>📅 Projeção de Impactos</strong></p>
+<ul>
+  <li>Curto prazo: risco de novos atrasos e pressão de custos.</li>
+  <li>Médio prazo: impacto em marcos contratuais e metas estratégicas.</li>
+  <li>Stakeholders: intensificar monitoramento e comunicação executiva.</li>
+</ul>
 
-    <p><strong>🏛 Pilar ECK (foco estratégico)</strong><br/>
-    Pilar: <strong>{esc(pilar_show)}</strong><br/>
-    Justificativa: {esc(justificativa_eck_txt)}</p>
+<p><strong>🧭 Recomendações Estratégicas (metas gerais)</strong></p>
+<ul>
+  <li>Revisar caminho crítico e renegociar entregas críticas.</li>
+  <li>Metas‑alvo: CPI ≥ 0,90 e SPI ≥ 0,95.</li>
+  <li>Integrar áreas e reforçar controle de produtividade.</li>
+</ul>
 
-    {("<p><strong>▶ Próximos Passos (propostas)</strong></p><ul>" + li_list(proximos_passos) + "</ul>") if proximos_passos else ""}
+<p><strong>🏛 Pilar ECK (foco estratégico)</strong><br/>
+{f"Pilar declarado: <strong>{esc(pilar_declarado)}</strong><br/>" if pilar_declarado != "Não informado" else ""}
+{(f"Pilar sugerido (análise): <strong>{esc(pilar_sugerido)}</strong> ⚠️ (recomendado realinhar)<br/>{'Justificativa (sugerido): ' + esc(justificativa_sugerido) + '<br/>' if justificativa_sugerido else ''}Justificativa (atual): {esc(justificativa_eck_txt)}"
+  if (divergente and pilar_sugerido) else
+  f"Pilar: <strong>{esc(pilar_declarado if pilar_declarado != 'Não informado' else pilar_final)}</strong><br/>Justificativa: {esc(justificativa_eck_txt)}")}
+</p>
 
-    <p><strong>✅ Resumo Executivo</strong><br/>
-    O projeto “{esc(nome)}” requer atenção {esc(risco.lower())} {esc(risco_emoji)}. Foco no pilar {esc(pilar_show)} e disciplina de execução para assegurar valor e entrega.</p>
-    """.strip()
+{f"<p><strong>▶ Próximos Passos — (Recomendado, alinhado ao Pilar sugerido)</strong></p><ul>{proximos_rec_html}</ul>" if proximos_rec_html else ""}
+{f"<p><strong>▶ Próximos Passos — (Atual, alinhado ao Pilar declarado)</strong></p><ul>{proximos_atual_html}</ul>" if proximos_atual_html else ""}
+
+<p><strong>✅ Resumo Executivo</strong><br/>
+O projeto “{esc(nome)}” requer atenção {esc(risco.lower())} {esc(risco_emoji)}. Considerar foco no pilar {esc((pilar_sugerido or pilar_final) if (divergente and pilar_sugerido) else (pilar_declarado if pilar_declarado != 'Não informado' else pilar_final))} e disciplina de execução para assegurar valor e entrega.</p>
+""".strip()
 
     return {"txt": txt_report.strip(), "md": md_report.strip(), "html": html_report}
 
-
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 # Endpoint helpers
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.2.0"}
+    return {"status": "ok", "version": "1.3.0"}
 
 def _analisar(campos: Dict[str, str]) -> Dict[str, Any]:
     trace: List[str] = []
@@ -444,25 +568,52 @@ def _analisar(campos: Dict[str, str]) -> Dict[str, Any]:
 
     # Pilar
     pilar_declarado = campos.get("pilar", "Não informado")
-    pilar_inferido = inferir_pilar(campos, campos_num, trace)
-    pilar_final = pilar_declarado if pilar_declarado and pilar_declarado != "Não informado" else (pilar_inferido or "Não informado")
+    pilar_inferido = inferir_pilar(campos, campos_num, trace)  # sugerido (pode ser None)
+
+    # Divergência: declarado vs inferido
+    def _norm(s): return normalize(s or "")
+    divergente = (
+        pilar_declarado and pilar_declarado != "Não informado" and
+        pilar_inferido and _norm(pilar_declarado) != _norm(pilar_inferido)
+    )
+
+    # Pilar final (mantém política anterior: se declararam, prevalece; senão usa inferido)
+    pilar_final = pilar_declarado if (pilar_declarado and pilar_declarado != "Não informado") else (pilar_inferido or "Não informado")
+
+    if divergente:
+        trace.append(f"Divergência Pilar: declarado='{pilar_declarado}' vs sugerido='{pilar_inferido}'")
 
     # Score e risco
     score = calcular_score_risco(campos_num, campos.get("observacoes", ""), trace)
     classificacao = classificar_risco(score)
 
-    # Próximos passos
-    proximos = gerar_proximos_passos(
+    # Próximos passos — duas opções
+    # (Recomendado): alinha ao sugerido se existir; senão, usa pilar_final
+    pilar_para_recomendado = pilar_inferido or pilar_final
+    proximos_recomendado = gerar_proximos_passos(
         cpi=campos_num["cpi_num"],
         spi=campos_num["spi_num"],
         gap_pf=gap_pf,
         obs=campos.get("observacoes", ""),
-        pilar_final=pilar_final,
+        pilar_final=pilar_para_recomendado,
+        stakeholders=campos.get("stakeholders", "Não informado"),
+    )
+    # (Atual): alinha ao pilar declarado (se não informado, ainda assim gera passos gerais sem diretriz de pilar)
+    proximos_atual = gerar_proximos_passos(
+        cpi=campos_num["cpi_num"],
+        spi=campos_num["spi_num"],
+        gap_pf=gap_pf,
+        obs=campos.get("observacoes", ""),
+        pilar_final=pilar_declarado if pilar_declarado else "Não informado",
         stakeholders=campos.get("stakeholders", "Não informado"),
     )
 
-    # Justificativa ECK
-    justificativa = justificativa_pilar_eck(pilar_final)
+    # Riscos-chave
+    riscos_chave = listar_riscos(campos_num, campos.get("observacoes", ""))
+
+    # Justificativas
+    justificativa_final = justificativa_pilar_eck(pilar_final)
+    justificativa_sugerido = justificativa_pilar_eck(pilar_inferido) if pilar_inferido else None
 
     # Relatórios
     reports = format_report(
@@ -472,29 +623,40 @@ def _analisar(campos: Dict[str, str]) -> Dict[str, Any]:
         risco=classificacao,
         pilar_declarado=pilar_declarado,
         pilar_final=pilar_final,
-        justificativa_eck_txt=justificativa,
-        proximos_passos=proximos,
+        justificativa_eck_txt=justificativa_final,
+        proximos_passos_recomendado=proximos_recomendado,
+        proximos_passos_atual=proximos_atual,
         kpis=kpis,
+        riscos_chave=riscos_chave,
+        divergente=divergente,
+        pilar_sugerido=pilar_inferido,
+        justificativa_sugerido=justificativa_sugerido
     )
 
     payload_out = {
-        "versao_api": "1.2.0",
+        "versao_api": "1.3.0",
         "campos_interpretados": {**campos, **campos_num, "pilar_final": pilar_final},
         "kpis": kpis,
         "score_risco": score,
         "classificacao_risco": classificacao,
-        "proximos_passos": proximos,
+        "riscos_chave": riscos_chave,
+        "pilar_declarado": pilar_declarado,
+        "pilar_sugerido": pilar_inferido,
+        "pilar_divergente": divergente,
+        "proximos_passos_recomendado": proximos_recomendado,
+        "proximos_passos_atual": proximos_atual,
         "trace": trace,
         # Compat com A360:
         "conclusao_executiva": reports["txt"],
-        # Extras para Teams/Email futuros:
+        # Extras (Teams/Email):
         "conclusao_executiva_markdown": reports["md"],
         "conclusao_executiva_html": reports["html"],
     }
     return payload_out
-# ---------------------------------------------
+
+# -------------------------------------------------------------------------
 # Endpoints principais
-# ---------------------------------------------
+# -------------------------------------------------------------------------
 @app.post("/analisar-projeto-texto")
 async def analisar_projeto_texto(payload: TextoRequest):
     campos = parse_from_text(payload.texto)
