@@ -1,12 +1,11 @@
-# main.py - Vera Estratégica API v1.4.0
-# Kaio / Projeto Vera
-# - Mantém compat com v1.2/1.3 (A360 consome conclusao_executiva TXT)
-# - Acrescenta campos opcionais: objetivo, resumo/planos/pontos, ISP/IDP/IDCo/IDB,
-#   cronograma, data_final_planejada, baseline, escopo, financeiro
-# - Strategy Fit (ECK) + divergência (declarado x sugerido) e 2 trilhas de próximos passos
-# - Lições aprendidas (auto-sugeridas)
-# - Riscos-chave ampliados
-# - Stub de evidências externas (desligado por padrão)
+# main.py - Vera Estratégica API v1.5.0
+# Kaio / Projeto Verinha
+# - Compatível com v1.2/1.3/1.4 (A360 consome conclusao_executiva TXT)
+# - Acrescenta seção "🧭 Análise Estratégica" (Visão 2028 / E-C-K, Propósito/Valores, Fit de Portfólio, Rota)
+# - Mantém campos opcionais (objetivo, status/planos/pontos, ISP/IDP/IDCo/IDB, cronograma, baseline, escopo, financeiro)
+# - Strategy Fit (ECK) + divergência (declarado x sugerido) + 2 trilhas de próximos passos
+# - Lições aprendidas (auto-sugeridas) + Riscos-chave
+# - Modo LEAN opcional via env var (reduz verbosidade sem perder pontos-chave)
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -17,29 +16,29 @@ import os
 import re
 from datetime import datetime, date
 
-app = FastAPI(title="Vera Estratégica API", version="1.4.0")
+app = FastAPI(title="Vera Estratégica API", version="1.5.0")
 
-# -----------------------------------------------------------------------------
-# Feature flags e metas simples (edite aqui conforme necessidade)
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# Feature flags e metas simples
+# -------------------------------------------------------------------------------------------------
 FEATURES = {
     "enable_strategy_fit": True,
     "enable_lessons_learned": True,
     "enable_finance_pack": True,
     "enable_schedule_pack": True,
-    # Habilita busca de evidências externas (stub) via var de ambiente:
     "enable_external_evidence": os.getenv("EXTERNAL_EVIDENCE_ENABLED", "false").lower() == "true",
+    "enable_strategic_analysis": True,  # NOVO: seção estratégica (aba)
 }
-
 TARGETS = {
     "cpi": 0.90,
     "spi": 0.95,
     "idx_meta": 1.00,  # ISP / IDP / IDCo / IDB (abaixo é pior; acima é melhor)
 }
+LEAN_MODE = os.getenv("LEAN_MODE", "false").lower() == "true"
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Models
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 class TextoRequest(BaseModel):
     texto: str
 
@@ -54,22 +53,21 @@ class ProjetoRequest(BaseModel):
     stakeholders: Optional[str] = None
     observacoes: Optional[str] = None
     pilar: Optional[str] = None
-
     # Novos campos (opcionais)
     objetivo: Optional[str] = None
-    resumo_status: Optional[List[str]] = None       # lista de bullets
+    resumo_status: Optional[List[str]] = None  # lista de bullets
     planos_proximo_periodo: Optional[List[str]] = None
     pontos_atencao: Optional[List[str]] = None
-    indicadores: Optional[Dict[str, Any]] = None    # {"isp":..., "idp":..., "idco":..., "idb":...}
-    data_final_planejada: Optional[str] = None      # "YYYY-MM-DD" ou "DD/MM/YYYY"
-    baseline: Optional[Dict[str, Any]] = None       # {"prazo": {"data_planejada":...}, "custo":{"capex_aprovado":...}, "escopo":"..."}
+    indicadores: Optional[Dict[str, Any]] = None  # {"isp":..., "idp":..., "idco":..., "idb":...}
+    data_final_planejada: Optional[str] = None  # "YYYY-MM-DD" ou "DD/MM/YYYY"
+    baseline: Optional[Dict[str, Any]] = None  # {"prazo":{"data_planejada":...}, "custo":{"capex_aprovado":...}, "escopo":"..."}
     escopo: Optional[str] = None
-    cronograma: Optional[Dict[str, Any]] = None     # {"tarefas":[{"nome":..., "inicio":..., "fim":..., "pct":..., "critica":True/False}, ...]}
-    financeiro: Optional[Dict[str, Any]] = None     # {"capex_aprovado":..., "capex_comp":..., "capex_exec":..., "ev":..., "pv":..., "ac":..., "eac":..., "vac":...}
+    cronograma: Optional[Dict[str, Any]] = None  # {"tarefas":[{"nome":..., "inicio":..., "fim":..., "%/pct":..., "critica":True/False}, ...]}
+    financeiro: Optional[Dict[str, Any]] = None  # {"capex_aprovado":..., "capex_comp":..., "capex_exec":..., "ev":..., "pv":..., "ac":..., "eac":..., "vac":...}
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Helpers de normalização e parsing
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 def normalize(s: Optional[str]) -> str:
     if not s:
         return ""
@@ -110,9 +108,9 @@ def parse_date(s: Optional[str]) -> Optional[date]:
             continue
     return None
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Parser do texto colado no A360 (rótulos + blocos)
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 def parse_from_text(texto: str) -> Dict[str, Any]:
     # Campos base com valores default
     campos: Dict[str, Any] = {
@@ -132,12 +130,11 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
         "pontos_atencao": [],
         "indicadores": {},  # isp/idp/idco/idb
         "data_final_planejada": "Não informado",
-        "baseline": {},     # prazo/custo/escopo
+        "baseline": {},  # prazo/custo/escopo
         "escopo": "Não informado",
         "cronograma": {"tarefas": []},
         "financeiro": {},
     }
-
     lines = texto.splitlines()
     i = 0
     # Conjunto de rótulos conhecidos (normalizados)
@@ -171,14 +168,12 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
             raw = lines[j].strip()
             if raw == "":
                 break
-            # se for um novo rótulo, parar
             has, _, _ = is_label(raw)
             if has:
                 break
             if raw.startswith("- "):
                 bullets.append(raw[2:].strip())
             else:
-                # linha contínua: agrega ao último bullet (se houver)
                 if bullets:
                     bullets[-1] = (bullets[-1] + " " + raw).strip()
                 else:
@@ -187,20 +182,14 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
         return bullets, j
 
     def parse_task_line(raw: str) -> Optional[Dict[str, Any]]:
-        # Exemplo: "- Nome: Fundação | Início: 2025-08-01 | Fim: 2025-09-15 | %: 60 | Crítica: Sim"
-        m = re.findall(r"(?i)(nome|inicio|início|fim|%|pct|critica|crítica)\s*:\s*([^|]+)")
-        if not m:
-            # tentativa por split simples:
-            parts = [p.strip() for p in raw.split("|")]
-            d: Dict[str, Any] = {}
-            for p in parts:
-                if ":" in p:
-                    k, vv = p.split(":", 1)
-                    d[normalize(k)] = vv.strip()
-        else:
-            d = {normalize(k): v.strip() for k, v in m}  # type: ignore
+        # Tenta key:value por linhas
+        parts = [p.strip() for p in raw.split("\n")]
+        d: Dict[str, Any] = {}
+        for p in parts:
+            if ":" in p:
+                k, vv = p.split(":", 1)
+                d[normalize(k)] = vv.strip()
         if not d:
-            # fallback: se a linha vier como "- Comissionamento 0% 2025-12-01 a 2025-12-10 Critica: Nao"
             return None
         nome = d.get("nome") or raw.replace("- ", "").strip()
         ini = parse_date(d.get("inicio") or d.get("início"))
@@ -251,7 +240,6 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
                 has2, _, _ = is_label(raw)
                 if has2:
                     break
-                # espera começar com "-" (bullet)
                 if raw.startswith("-"):
                     t = parse_task_line(raw.lstrip("-").strip())
                     if t:
@@ -284,13 +272,12 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
         elif nk == "objetivo":
             campos["objetivo"] = val or "Não informado"
         elif nk in ("cpi", "spi", "isp", "idp", "idco", "idb"):
-            # índices podem ficar em indicadores
             ind = campos.get("indicadores") or {}
             if nk in ("cpi", "spi"):
                 campos[nk] = val or "Não informado"
             else:
                 ind[nk] = val
-                campos["indicadores"] = ind
+            campos["indicadores"] = ind
         elif nk == "avanco fisico":
             campos["avanco_fisico"] = val or "Não informado"
         elif nk == "avanco financeiro":
@@ -317,14 +304,13 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
             campos["observacoes"] = val or "Não informado"
         elif nk == "pilar":
             campos["pilar"] = val or "Não informado"
-
         i += 1
 
     return campos
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Heurísticas: risco, pilar, cronograma, baseline, financeiro
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 def calcular_score_risco_base(campos_num: Dict[str, Optional[float]], observacoes: str, trace: List[str]) -> float:
     score = 0.0
     cpi = campos_num.get("cpi_num")
@@ -377,18 +363,13 @@ def risco_por_cronograma(tarefas: List[Dict[str, Any]], trace: List[str]) -> flo
             score += 3; trace.append(f"Tarefa crítica atrasada: {t.get('nome','')} (+3)")
         elif atrasado:
             score += 1; trace.append(f"Tarefa atrasada: {t.get('nome','')} (+1)")
-        # andamento baixo em tarefa crítica
         if pct is not None and pct < 30 and crit:
             score += 1; trace.append(f"Tarefa crítica <30%: {t.get('nome','')} (+1)")
     return score
 
 def risco_por_baseline_financeiro(baseline: Dict[str, Any], fin: Dict[str, Any], trace: List[str]) -> float:
     score = 0.0
-    # Prazo: comparar baseline prazo com data_final_planejada se existir
-    prazo = baseline.get("prazo") or {}
-    data_base = parse_date(prazo.get("data_planejada"))
-    # (Pontuar aqui apenas se desejar; manteremos leve)
-    # Financeiro: VAC < 0, EAC > BAC(capex aprovado)
+    # Financeiro: VAC < 0, EAC > CAPEX aprovado
     capex_aprovado = to_number((baseline.get("custo") or {}).get("capex_aprovado"))
     eac = to_number(fin.get("eac"))
     vac = to_number(fin.get("vac"))
@@ -424,7 +405,7 @@ def inferir_pilar(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]]
     score_cli = 0
     score_cap = 0
 
-    # Palavras-chave por pilar (base ECK)
+    # Palavras-chave por pilar
     if any(k in texto_base for k in ["processo", "estrutura", "governanca", "governança", "rituais", "metas", "desdobramento", "coerencia", "coerência", "execucao", "execução"]):
         score_exc += 2
     if any(k in texto_base for k in ["cliente", "experiencia", "experiência", "sla", "jornada", "confiabilidade", "satisfacao", "satisfação", "atendimento"]):
@@ -432,20 +413,18 @@ def inferir_pilar(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]]
     if any(k in texto_base for k in ["capex", "investimento", "priorizacao", "priorização", "retorno", "vpl", "tir", "payback", "disciplina de capital"]):
         score_cap += 2
 
-    # Métricas puxando para Excelência quando abaixo alvo
+    # Métricas puxando Excelência quando abaixo alvo
     if (cpi is not None and cpi < TARGETS["cpi"]) or (spi is not None and spi < TARGETS["spi"]):
         score_exc += 2; trace.append("ECK hint→Excelência (CPI/SPI abaixo do target)")
-    # Índices <1,00 puxam Excelência (capaci/execução)
     for v in (isp, idp, idco, idb):
         if v is not None and v < TARGETS["idx_meta"]:
             score_exc += 1
 
-    # Se CAPEX/retorno fortemente enfatizados, puxar Capital
-    if any(k in texto_base for k in ["retorno", "vpl", "tir", "payback"]) or \
-       to_number((campos.get("financeiro") or {}).get("capex_aprovado")):
+    # Capital quando ênfase financeira/retorno
+    fin_capex = to_number((campos.get("financeiro") or {}).get("capex_aprovado"))
+    if any(k in texto_base for k in ["retorno", "vpl", "tir", "payback"]) or fin_capex:
         score_cap += 1
 
-    # Escolha do pilar dominante sugerido
     trio = [("Excelência Organizacional", score_exc), ("Foco no Cliente", score_cli), ("Alocação Estratégica de Capital", score_cap)]
     trio.sort(key=lambda x: x[1], reverse=True)
     if trio[0][1] == 0:
@@ -471,7 +450,7 @@ def split_stakeholders(stakeholders: str) -> List[str]:
     if not stakeholders or stakeholders == "Não informado":
         return []
     parts: List[str] = []
-    for sep in [";", ",", "\n", "|"]:
+    for sep in [";", ",", "\\n", "\n"]:
         if sep in stakeholders:
             parts = [p.strip() for p in stakeholders.split(sep)]
             break
@@ -529,6 +508,7 @@ def listar_riscos(campos_num: Dict[str, Optional[float]],
     spi = campos_num.get("spi_num")
     fis = campos_num.get("avanco_fisico_num")
     finv = campos_num.get("avanco_financeiro_num")
+
     if cpi is not None:
         if cpi < 0.85: riscos.append("Custo: CPI < 0,85 — forte risco orçamentário.")
         elif cpi < TARGETS["cpi"]: riscos.append("Custo: CPI entre 0,85 e 0,90 — pressão de custos.")
@@ -578,7 +558,7 @@ def listar_riscos(campos_num: Dict[str, Optional[float]],
         ("equip", "Técnico: fornecimento de equipamentos sensível."),
         ("critico", "Risco crítico citado em observações."),
         ("risco", "Risco adicional citado em observações.")
-    ]
+        ]
     for key, msg in mapping:
         if key in obs and msg not in riscos:
             riscos.append(msg)
@@ -589,6 +569,7 @@ def listar_riscos(campos_num: Dict[str, Optional[float]],
         if r not in seen:
             seen.add(r); out.append(r)
     return out
+
 def strategy_fit(campos: Dict[str, Any],
                  campos_num: Dict[str, Optional[float]],
                  indicadores: Dict[str, Optional[float]]) -> Dict[str, Any]:
@@ -613,6 +594,7 @@ def strategy_fit(campos: Dict[str, Any],
         score_cli += 20
     if any(k in texto for k in ["capex", "investimento", "priorizacao", "retorno", "vpl", "tir", "payback"]):
         score_cap += 20
+
     # Métricas (puxam Excelência quando abaixo)
     cpi, spi = campos_num.get("cpi_num"), campos_num.get("spi_num")
     for (v, alvo) in [(cpi, TARGETS["cpi"]), (spi, TARGETS["spi"])]:
@@ -622,11 +604,9 @@ def strategy_fit(campos: Dict[str, Any],
         if v is not None and v < TARGETS["idx_meta"]:
             score_exc += 5
 
-    # Normalização ingênua para 0-100
     raw_sum = score_exc + score_cli + score_cap
     if raw_sum == 0:
         return {"score": 0, "pilar_sugerido": None, "justificativa": "Sem sinais suficientes."}
-    # escolher dominante
     trio = [("Excelência Organizacional", score_exc), ("Foco no Cliente", score_cli), ("Alocação Estratégica de Capital", score_cap)]
     trio.sort(key=lambda x: x[1], reverse=True)
     pilar_sugerido, top = trio[0]
@@ -644,7 +624,6 @@ def gerar_licoes_aprendidas(campos: Dict[str, Any],
     itens: List[Dict[str, str]] = []
     owners = split_stakeholders(campos.get("stakeholders", ""))
     owner = owners[0] if owners else "PMO/Projeto"
-
     # Padrões básicos
     cpi = campos_num.get("cpi_num"); spi = campos_num.get("spi_num")
     if cpi is not None and cpi < TARGETS["cpi"]:
@@ -680,13 +659,178 @@ def gerar_licoes_aprendidas(campos: Dict[str, Any],
                 "owner": owner, "prazo": "D+5", "categoria": "Planejamento/Execução"
             })
             break
-
-    # Adiciona no máximo 5
     return itens[:5]
 
-# -----------------------------------------------------------------------------
-# Formatação (TXT/MD/HTML) - mantém estrutura aprovada e acrescenta novas seções
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# NOVO: Análise Estratégica (Visão 2028/E-C-K, Propósito/Valores, Fit de Portfólio, Rota)
+# -------------------------------------------------------------------------------------------------
+def _score_prop_valores(texto: str) -> int:
+    """
+    Heurística simples para coerência com Propósito e Valores Eletrobras.
+    +2 para cada marcador encontrado (máx 10).
+    """
+    marcadores = [
+        "seguranca", "segurança",   # Vida em primeiro lugar
+        "integridade",              # Integridade sempre
+        "pessoas", "time",          # Nossa energia vem das pessoas
+        "excelencia", "excelência", # Nossa excelência faz a diferença
+        "inovar", "inovacao", "inovação", # Inovar para gerar valor
+        "descarbon", "sustentavel", "sustentável", "esg"  # Cuidar do planeta
+    ]
+    t = normalize(texto)
+    pontos = 0
+    seen = set()
+    for m in marcadores:
+        if m in t and m not in seen:
+            seen.add(m); pontos += 2
+            if pontos >= 10:
+                break
+    return min(10, pontos)
+
+def _classificar_portfolio(texto: str) -> Tuple[str, str]:
+    """
+    Classifica fit de portfólio (Core / Opcionalidade / Exploratório) por keywords setoriais.
+    Retorna (categoria, justificativa).
+    """
+    t = normalize(texto)
+    core_kw = ["transmissao", "transmissão", "lt", "linhas de transmissao", "subestacao", "subestação",
+               "uhe", "hidreletrica", "hidrelétrica", "parque eolico onshore", "solar onshore",
+               "rm transmissao", "rm geração", "geracao", "geração"]
+    opc_kw = ["armazenamento", "bateria", "adição de potencia", "adição de potência",
+              "repotenciacao", "repotenciação", "atualizacao", "modernizacao", "modernização",
+              "gestao de ativos", "gestão de ativos", "eficiencia energetica", "eficiência energética",
+              "contratos corporativos", "ppa corporativo"]
+    exp_kw = ["eolica offshore", "eólica offshore", "hidrogenio verde", "hidrogênio verde",
+              "datacenter", "data center", "telecom", "criptomoeda", "crypto", "internacionalizacao", "internacionalização",
+              "gd flutuante", "offshore", "h2v"]
+    if any(k in t for k in core_kw):
+        return "Core", "Aderente ao core (Transmissão/Geração renovável e O&M)."
+    if any(k in t for k in opc_kw):
+        return "Opcionalidade", "Amplia portfólio com alavancas adjacentes (armazenamento/repotenciação/eficiência)."
+    if any(k in t for k in exp_kw):
+        return "Exploratório", "Trilhas emergentes com maturidade/setor ainda em evolução."
+    return "Indefinido", "Sem sinais setoriais claros; classificar com mais dados."
+
+def _label_de_nivel(score: int) -> str:
+    if score >= 70: return "Alto"
+    if score >= 45: return "Médio"
+    return "Baixo"
+
+def analise_estrategica(campos: Dict[str, Any],
+                        strategy: Dict[str, Any],
+                        classificacao_risco: str,
+                        divergente: bool,
+                        pilar_declarado: str,
+                        pilar_sugerido: Optional[str]) -> Dict[str, Any]:
+    """
+    Consolida pitacos estratégicos:
+      - Alinhamento com Visão 2028 / E-C-K (usa strategy_fit + penalizações/bonificações)
+      - Coerência com Propósito/Valores
+      - Fit de Portfólio (Core / Opcionalidade / Exploratório)
+      - Faz sentido para a companhia? (Sim/Parcialmente/Não)
+      - Rota recomendada (Acelerar/Seguir com salvaguardas/Pivotar/Pausar)
+      - Recomendações (Continuar / Ajustar / Parar)
+    """
+    objetivo = campos.get("objetivo", "") or ""
+    escopo = campos.get("escopo", "") or ""
+    observacoes = campos.get("observacoes", "") or ""
+    resumo = " ".join(campos.get("resumo_status") or [])
+    planos = " ".join(campos.get("planos_proximo_periodo") or [])
+    texto = " ".join([objetivo, escopo, observacoes, resumo, planos])
+
+    # Base: strategy_fit score (0-100)
+    base = strategy.get("score") or 0
+
+    # Penalizações/Aumentos:
+    # - Divergência Pilar declarado x sugerido: -10
+    # - Risco: Alto -20, Médio -10, Baixo 0
+    # - Propósito/Valores: +0..+10
+    ajuste = 0
+    if divergente:
+        ajuste -= 10
+    if classificacao_risco == "Alto":
+        ajuste -= 20
+    elif classificacao_risco == "Médio":
+        ajuste -= 10
+
+    pv_bonus = _score_prop_valores(texto)  # 0..10
+    ajuste += pv_bonus
+
+    alinhamento_score = int(max(0, min(100, base + ajuste)))
+    alinhamento_label = _label_de_nivel(alinhamento_score)
+
+    # Fit de Portfólio
+    portfolio_fit, portfolio_msg = _classificar_portfolio(texto)
+
+    # Faz sentido?
+    sentido = "Sim" if (alinhamento_score >= 60 and portfolio_fit in ("Core", "Opcionalidade")) else ("Parcialmente" if alinhamento_score >= 40 else "Não")
+
+    # Rota recomendada (regras simples)
+    if classificacao_risco == "Alto" and alinhamento_score < 50:
+        rota = "Pausar/Pivotar"
+        rota_msg = "Pausar decisões de compromisso irreversível; pivotar escopo para elevar alinhamento E‑C‑K e reduzir risco."
+    elif classificacao_risco == "Alto" and alinhamento_score >= 50:
+        rota = "Seguir com salvaguardas"
+        rota_msg = "Manter andamento com gates de decisão, reforço de governança e mitigadores financeiros/cronograma."
+    elif classificacao_risco == "Médio":
+        rota = "Seguir"
+        rota_msg = "Prosseguir com controle ativo (EVM/rituais), validando hipóteses de cliente/retorno e disciplina de capital."
+    else:  # Risco Baixo
+        rota = "Acelerar" if alinhamento_score >= 70 else "Seguir"
+        rota_msg = "Capturar ganhos rápidos; aprofundar diferencial no pilar dominante." if rota == "Acelerar" else "Seguir plano com monitoramento padrão."
+
+    # Recomendações estratégicas (Continuar/Ajustar/Parar)
+    p_final = pilar_sugerido or pilar_declarado or "Não informado"
+    p_norm = normalize(p_final)
+    continuar: List[str] = []
+    ajustar: List[str] = []
+    parar: List[str] = []
+
+    # Continuar conforme pilar
+    if "cliente" in p_norm:
+        continuar += ["Profundidade em necessidades do cliente (descoberta contínua) e SLAs de jornada."]
+    if "excelencia" in p_norm:
+        continuar += ["Rituais semanais de performance, metas desdobradas e coerência entre áreas."]
+    if "alocacao" in p_norm:
+        continuar += ["Disciplina de capital (VPL/TIR ajustadas a risco) e revisão periódica do business case."]
+
+    # Ajustar conforme portfolio_fit
+    if portfolio_fit == "Exploratório":
+        ajustar += ["Definir hipóteses claras de valor/tecnologia e estágios (MVP→piloto→scale) com gates de investimento."]
+    if alinhamento_label == "Médio":
+        ajustar += ["Reforçar elo entre objetivos do projeto e Visão 2028 (benefício para cliente + tese de valor de longo prazo)."]
+    if alinhamento_label == "Baixo":
+        ajustar += ["Reenquadrar escopo para pilar dominante E‑C‑K ou reavaliar tese; considerar realocação de CAPEX."]
+
+    # Parar (quando aplicável)
+    if sentido == "Não":
+        parar += ["Evitar comprometer CAPEX significativo até elevar o alinhamento estratégico e reduzir riscos principais."]
+
+    # LEAN MODE – sintetiza bullets
+    if LEAN_MODE:
+        continuar = continuar[:1] or ["Manter disciplina no pilar dominante."]
+        ajustar = ajustar[:1] or ["Ajustar premissas para elevar o fit estratégico."]
+        parar = parar[:1] if parar else []
+
+    analise = {
+        "alinhamento_score": alinhamento_score,      # 0..100
+        "alinhamento_label": alinhamento_label,      # Alto/Médio/Baixo
+        "portfolio_fit": portfolio_fit,              # Core/Opcionalidade/Exploratório/Indefinido
+        "portfolio_msg": portfolio_msg,
+        "proposito_valores_bonus": pv_bonus,         # 0..10
+        "faz_sentido": sentido,                      # Sim/Parcialmente/Não
+        "rota_recomendada": rota,                    # Acelerar/Seguir/Seguir com salvaguardas/Pausar/Pivotar
+        "rota_msg": rota_msg,
+        "recomendacoes_continuar": continuar,
+        "recomendacoes_ajustar": ajustar,
+        "recomendacoes_parar": parar,
+        "pilar_estrategico_foco": p_final,
+    }
+    return analise
+
+# -------------------------------------------------------------------------------------------------
+# Formatação (TXT/MD/HTML) - inclui seção estratégica
+# -------------------------------------------------------------------------------------------------
 def format_report(campos: Dict[str, Any],
                   campos_num: Dict[str, Optional[float]],
                   score: float,
@@ -702,7 +846,8 @@ def format_report(campos: Dict[str, Any],
                   pilar_sugerido: Optional[str],
                   justificativa_sugerido: Optional[str],
                   strategy: Dict[str, Any],
-                  licoes: List[Dict[str, str]]) -> Dict[str, str]:
+                  licoes: List[Dict[str, str]],
+                  analise: Dict[str, Any]) -> Dict[str, str]:
 
     nome = campos.get("nome_projeto", "Projeto não identificado") or "Projeto não identificado"
     cpi = campos.get("cpi", "Não informado")
@@ -718,19 +863,16 @@ def format_report(campos: Dict[str, Any],
     pontos = campos.get("pontos_atencao") or []
     escopo = campos.get("escopo", "Não informado")
     data_final = campos.get("data_final_planejada", "Não informado")
-
     ind = campos.get("indicadores") or {}
     isp = ind.get("isp"); idp = ind.get("idp"); idco = ind.get("idco"); idb = ind.get("idb")
-
     fin = campos.get("financeiro") or {}
     capex_aprovado = fin.get("capex_aprovado") or (campos.get("baseline", {}).get("custo", {}) or {}).get("capex_aprovado")
     capex_comp = fin.get("capex_comp") or fin.get("capex comprometido")
     capex_exec = fin.get("capex_exec") or fin.get("capex executado")
     ev = fin.get("ev"); pv = fin.get("pv"); ac = fin.get("ac"); eac = fin.get("eac"); vac = fin.get("vac")
-
     risco_emoji = {"Alto": "🔴", "Médio": "🟠", "Baixo": "🟢"}.get(risco, "⚠️")
 
-    # ---------- Texto (para A360) ----------
+    # --- Texto (para A360) ---
     txt: List[str] = []
     txt += [
         f"📊 Relatório Executivo Preditivo – Projeto “{nome}”",
@@ -752,7 +894,7 @@ def format_report(campos: Dict[str, Any],
 
     txt += ["", "🎯 Objetivo do Projeto", f"{objetivo if objetivo!='Não informado' else '—'}"]
 
-    # Resumo/Planos/Pontos (no formato que você utiliza)
+    # Resumo/Planos/Pontos
     if resumo_status:
         txt += ["", "📝 RESUMO DA SITUAÇÃO ATUAL (PROGRESSO) E AÇÕES CORRETIVAS REALIZADAS"]
         txt += [f"- {b}" for b in resumo_status]
@@ -776,10 +918,10 @@ def format_report(campos: Dict[str, Any],
     # Índices meta 1,00
     if any(x is not None for x in (isp, idp, idco, idb)):
         txt += ["- Indicadores de desempenho (meta = 1,00):"]
-        if isp is not None: txt.append(f"  • ISP: {isp}")
-        if idp is not None: txt.append(f"  • IDP: {idp}")
-        if idco is not None: txt.append(f"  • IDCo: {idco}")
-        if idb is not None: txt.append(f"  • IDB: {idb}")
+        if isp is not None: txt.append(f" • ISP: {isp}")
+        if idp is not None: txt.append(f" • IDP: {idp}")
+        if idco is not None: txt.append(f" • IDCo: {idco}")
+        if idb is not None: txt.append(f" • IDB: {idb}")
 
     # Financeiro (resumo)
     if FEATURES["enable_finance_pack"] and any([capex_aprovado, capex_comp, capex_exec, ev, pv, ac, eac, vac]):
@@ -809,27 +951,24 @@ def format_report(campos: Dict[str, Any],
         "- Médio prazo: impacto em marcos contratuais e metas estratégicas.",
         "- Stakeholders: intensificar monitoramento e comunicação executiva.",
         "",
-        "🧭 Recomendações Estratégicas (metas gerais)",
+        "🧠 Recomendações Estratégicas (metas gerais)",
         "- Revisar caminho crítico e renegociar entregas críticas.",
         "- Metas-alvo: CPI ≥ 0,90 e SPI ≥ 0,95.",
         "- Integrar áreas e reforçar controle de produtividade.",
         "",
-        "🏛 Pilar ECK (foco estratégico)",
+        "🏛️ Pilar ECK (foco estratégico)",
     ]
     if pilar_declarado != "Não informado":
         txt.append(f"- Pilar declarado: {pilar_declarado}")
     if divergente and pilar_sugerido:
         txt.append(f"- Pilar sugerido (análise): {pilar_sugerido} ⚠️ (recomendado realinhar)")
-        if justificativa_sugerido: txt.append(f"- Justificativa (sugerido): {justificativa_sugerido}")
-        txt.append(f"- Justificativa (atual): {justificativa_eck_txt}")
-    else:
-        show_txt = pilar_declarado if pilar_declarado != "Não informado" else pilar_final
-        txt.append(f"- Pilar: {show_txt}")
-        txt.append(f"- Justificativa: {justificativa_eck_txt}")
+    if justificativa_sugerido: txt.append(f"- Justificativa (sugerido): {justificativa_sugerido}")
+    txt.append(f"- Justificativa (atual): {justificativa_eck_txt}")
 
     # Strategy fit
     if FEATURES["enable_strategy_fit"] and strategy.get("score") is not None:
-        txt += ["", "📐 Strategy Fit (ECK)", f"- Score (0-100): {strategy.get('score')}"]
+        txt += ["", "📐 Strategy Fit (ECK)"]
+        txt += [f"- Score (0-100): {strategy.get('score')}"]
         if strategy.get("pilar_sugerido"):
             txt.append(f"- Pilar dominante sugerido: {strategy['pilar_sugerido']}")
 
@@ -847,40 +986,70 @@ def format_report(campos: Dict[str, Any],
         for it in licoes:
             txt += [
                 f"- Problema: {it['problema']}",
-                f"  • Causa-raiz: {it['causa_raiz']}",
-                f"  • Contramedida: {it['contramedida']}",
-                f"  • Owner: {it['owner']}   • Prazo: {it['prazo']}   • Categoria: {it['categoria']}",
+                f" • Causa-raiz: {it['causa_raiz']}",
+                f" • Contramedida: {it['contramedida']}",
+                f" • Owner: {it['owner']} • Prazo: {it['prazo']} • Categoria: {it['categoria']}",
             ]
+
+    # 🧭 NOVA SEÇÃO: Análise Estratégica
+    if FEATURES["enable_strategic_analysis"]:
+        txt += ["", "🧭 Análise Estratégica"]
+        if LEAN_MODE:
+            txt += [
+                f"- Alinhamento com Visão (E‑C‑K): {analise['alinhamento_label']} ({analise['alinhamento_score']})",
+                f"- Fit de Portfólio: {analise['portfolio_fit']} — {analise['portfolio_msg']}",
+                f"- Rota: {analise['rota_recomendada']} — {analise['rota_msg']}",
+            ]
+        else:
+            txt += [
+                f"- Alinhamento com Visão (E‑C‑K): {analise['alinhamento_label']} ({analise['alinhamento_score']})",
+                f"- Pilar de foco: {analise['pilar_estrategico_foco']}",
+                f"- Propósito & Valores (bônus): +{analise['proposito_valores_bonus']}/10",
+                f"- Fit de Portfólio: {analise['portfolio_fit']} — {analise['portfolio_msg']}",
+                f"- Faz sentido para a companhia? {analise['faz_sentido']}",
+                f"- Rota recomendada: {analise['rota_recomendada']} — {analise['rota_msg']}",
+                "",
+                "• Continuar",
+            ]
+            if analise["recomendacoes_continuar"]:
+                txt += [f"  - {b}" for b in analise["recomendacoes_continuar"]]
+            else:
+                txt += ["  - —"]
+            txt += ["• Ajustar"]
+            if analise["recomendacoes_ajustar"]:
+                txt += [f"  - {b}" for b in analise["recomendacoes_ajustar"]]
+            else:
+                txt += ["  - —"]
+            if analise["recomendacoes_parar"]:
+                txt += ["• Parar/Evitar"]
+                txt += [f"  - {b}" for b in analise["recomendacoes_parar"]]
 
     # Resumo executivo
     txt += ["", "✅ Resumo Executivo"]
     resumo_pilar_txt = (pilar_sugerido or pilar_final) if (divergente and pilar_sugerido) else (pilar_declarado if pilar_declarado != "Não informado" else pilar_final)
     txt.append(
-        f"O projeto “{nome}” requer atenção {risco.lower()} {({'Alto':'🔴','Médio':'🟠','Baixo':'🟢'}.get(risco,'⚠️'))}. "
+        f"O projeto “{nome}” requer atenção {risco.lower()} "
+        f"{({'Alto':'🔴','Médio':'🟠','Baixo':'🟢'}.get(risco,'⚠️'))}. "
         f"Considerar foco no pilar {resumo_pilar_txt} e disciplina de execução para assegurar valor e entrega."
     )
-    txt_report = "\n".join(txt)
 
-    # Mantemos MD/HTML simples (mesmo texto)
+    txt_report = "\n".join(txt)
     md_report = txt_report
     html_report = html.escape(txt_report).replace("\n", "<br/>")
-
     return {"txt": txt_report.strip(), "md": md_report.strip(), "html": html_report}
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Helpers de evidências externas (stub)
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 def buscar_evidencias_externas(topicos: List[str]) -> List[str]:
-    # Stub não faz chamadas externas por padrão (feature flag controla)
     if not FEATURES["enable_external_evidence"]:
         return []
-    # Aqui poderia haver uma busca via urllib/requests/httpx com allowlist
-    # Retornaríamos bullets como "Caso semelhante: ... (link)"
+    # Stub: integrar se necessário via httpx/requests com allowlist
     return []
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Core: _analisar
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
     trace: List[str] = []
 
@@ -916,7 +1085,6 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
     # Baseline e financeiro
     baseline = campos.get("baseline") or {}
     fin_raw = campos.get("financeiro") or {}
-    # Normalizar chaves de financeiro
     fin = {
         "capex_aprovado": fin_raw.get("capex_aprovado") or ((baseline.get("custo") or {}).get("capex_aprovado")),
         "capex_comp": fin_raw.get("capex_comp") or fin_raw.get("capex comprometido"),
@@ -946,9 +1114,8 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
         pilar_inferido and _norm(pilar_declarado) != _norm(pilar_inferido)
     )
 
-    # Pilar final (mantém política: se declararam, prevalece; senão usa inferido)
+    # Pilar final (política: se declararam, prevalece; senão usa inferido)
     pilar_final = pilar_declarado if (pilar_declarado and pilar_declarado != "Não informado") else (pilar_inferido or "Não informado")
-
     if divergente:
         trace.append(f"Divergência Pilar: declarado='{pilar_declarado}' vs sugerido='{pilar_inferido}'")
 
@@ -960,7 +1127,6 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
         score += risco_por_cronograma(tarefas, trace)
     if FEATURES["enable_finance_pack"]:
         score += risco_por_baseline_financeiro(baseline, fin, trace)
-
     classificacao = classificar_risco(score)
 
     # Próximos passos — 2 trilhas
@@ -989,6 +1155,16 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
     justificativa_final = justificativa_pilar_eck(pilar_final)
     justificativa_sugerido = justificativa_pilar_eck(pilar_inferido) if pilar_inferido else None
 
+    # NOVO: Análise Estratégica
+    analise = analise_estrategica(
+        campos=campos,
+        strategy=strategy,
+        classificacao_risco=classificacao,
+        divergente=divergente,
+        pilar_declarado=pilar_declarado,
+        pilar_sugerido=pilar_inferido
+    ) if FEATURES["enable_strategic_analysis"] else {}
+
     # Relatórios
     reports = format_report(
         campos=campos, campos_num=campos_num, score=score, risco=classificacao,
@@ -999,11 +1175,12 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
         kpis=kpis, riscos_chave=riscos_chave,
         divergente=divergente, pilar_sugerido=pilar_inferido,
         justificativa_sugerido=justificativa_sugerido,
-        strategy=strategy, licoes=licoes
+        strategy=strategy, licoes=licoes,
+        analise=analise
     )
 
     payload_out = {
-        "versao_api": "1.4.0",
+        "versao_api": app.version,
         "campos_interpretados": {**campos, **campos_num, "pilar_final": pilar_final},
         "indicadores": indicadores,
         "kpis": kpis,
@@ -1017,15 +1194,17 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
         "proximos_passos_recomendado": proximos_recomendado,
         "proximos_passos_atual": proximos_atual,
         "licoes_aprendidas": licoes,
+        "analise_estrategica": analise,  # NOVO: objeto estruturado
         "conclusao_executiva": reports["txt"],                 # compat A360 (TXT)
         "conclusao_executiva_markdown": reports["md"],         # extras
         "conclusao_executiva_html": reports["html"],           # extras
+        "trace": trace,
     }
     return payload_out
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Endpoints
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {"status": "ok", "version": app.version}
@@ -1037,7 +1216,6 @@ async def analisar_projeto_texto(payload: TextoRequest):
 
 @app.post("/analisar-projeto")
 async def analisar_projeto(payload: ProjetoRequest):
-    # Monta o dicionário a partir do JSON estruturado (mantendo defaults)
     campos: Dict[str, Any] = {
         "nome_projeto": payload.nome_projeto or "Não informado",
         "cpi": payload.cpi or "Não informado",
