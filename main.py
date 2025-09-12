@@ -1,10 +1,11 @@
-# main.py - Vera Estratégica API v1.5.0 (Lean + Alinhamento Estratégico ECK)
+# main.py - Vera Estratégica API v1.5.1 (Lean + Alinhamento Estratégico ECK + Hotfix)
 # Kaio / Projeto Verinha
 # - Compatível com A360 (consome conclusao_executiva TXT)
 # - Mantém endpoints: /health, /analisar-projeto-texto, /analisar-projeto
 # - Regra Kaio: sem "Crítico"; Alto >= RISK_HIGH_THRESHOLD (default=10)
 # - Nova camada: alinhamento estratégico (temas + decisão recomendada)
 # - Modo LEAN de relatório (enxuto, com limites de bullets configuráveis)
+# - Hotfix: conversão de indicadores e EAC/VAC para float dentro de format_report
 
 from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
@@ -16,9 +17,10 @@ import html as _html
 import os
 import re
 import uuid
+import json
 from datetime import datetime, date
 
-app = FastAPI(title="Vera Estratégica API", version="1.5.0")
+app = FastAPI(title="Vera Estratégica API", version="1.5.1")
 
 # ------------------------------
 # Feature flags e metas simples
@@ -52,7 +54,7 @@ _STRATEGY_DEFAULT = {
   "temas": {
     "Eficiência Operacional": {
       "peso": 3,
-      "keywords": ["produtividade", "processo", "governança", "rituais", "EVM", "padronização", "padronizacao"],
+      "keywords": ["produtividade", "processo", "governança", "rituais", "evm", "padronização", "padronizacao"],
       "indicadores": {"CPI<0.90": 2, "SPI<0.95": 2, "gap_pf>=8": 1},
       "como_alinhar": [
         "Ritos EVM semanais com plano D+7 por desvio",
@@ -62,7 +64,7 @@ _STRATEGY_DEFAULT = {
     },
     "Disciplina de Capital": {
       "peso": 3,
-      "keywords": ["CAPEX", "ROI", "VPL", "TIR", "payback", "alocação de capital", "alocacao de capital"],
+      "keywords": ["capex", "roi", "vpl", "tir", "payback", "alocação de capital", "alocacao de capital"],
       "indicadores": {"VAC<0": 2, "EAC>CAPEX_aprovado": 2},
       "como_alinhar": [
         "Revisar business case e opções de escopo",
@@ -72,7 +74,7 @@ _STRATEGY_DEFAULT = {
     },
     "Cliente & Qualidade de Serviço": {
       "peso": 2,
-      "keywords": ["cliente", "SLA", "jornada", "confiabilidade", "satisfação", "satisfacao", "NPS"],
+      "keywords": ["cliente", "sla", "jornada", "confiabilidade", "satisfação", "satisfacao", "nps"],
       "indicadores": {},
       "como_alinhar": [
         "Ajustar SLAs por segmento",
@@ -82,7 +84,7 @@ _STRATEGY_DEFAULT = {
     },
     "ESG & Licenciamento": {
       "peso": 2,
-      "keywords": ["licença", "licenca", "ambiental", "IBAMA", "comunidades", "emissões", "emissoes"],
+      "keywords": ["licença", "licenca", "ambiental", "ibama", "comunidades", "emissões", "emissoes"],
       "indicadores": {},
       "como_alinhar": [
         "Squad regulatório com calendário conjunto",
@@ -92,7 +94,7 @@ _STRATEGY_DEFAULT = {
     },
     "Digital & Automação": {
       "peso": 1,
-      "keywords": ["automação", "automacao", "digital", "dados", "IA", "A360"],
+      "keywords": ["automação", "automacao", "digital", "dados", "ia", "a360"],
       "indicadores": {},
       "como_alinhar": [
         "Automatizar rotinas operacionais",
@@ -145,14 +147,12 @@ class ProjetoRequest(BaseModel):
 # ------------------------------
 # Helpers de normalização e parsing
 # ------------------------------
-
 def normalize(s: Optional[str]) -> str:
     if not s:
         return ""
     s = unicodedata.normalize("NFD", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.lower().strip()
-
 
 def to_number(s: Optional[str]) -> Optional[float]:
     if s is None:
@@ -168,7 +168,6 @@ def to_number(s: Optional[str]) -> Optional[float]:
     except:
         return None
 
-
 def percent_to_number(s: Optional[str]) -> Optional[float]:
     if s is None:
         return None
@@ -176,7 +175,6 @@ def percent_to_number(s: Optional[str]) -> Optional[float]:
     if s.endswith("%"):
         s = s[:-1]
     return to_number(s)
-
 
 def parse_date(s: Optional[str]) -> Optional[date]:
     if not s:
@@ -192,7 +190,6 @@ def parse_date(s: Optional[str]) -> Optional[date]:
 # ------------------------------
 # Parser do texto colado no A360 (rótulos + blocos)
 # ------------------------------
-
 def parse_from_text(texto: str) -> Dict[str, Any]:
     campos: Dict[str, Any] = {
         "nome_projeto": "Não informado",
@@ -390,7 +387,6 @@ def parse_from_text(texto: str) -> Dict[str, Any]:
 # ------------------------------
 # Heurísticas: risco, pilar, cronograma, baseline, financeiro
 # ------------------------------
-
 def calcular_score_risco_base(campos_num: Dict[str, Optional[float]], observacoes: str, trace: List[str]) -> float:
     score = 0.0
     cpi = campos_num.get("cpi_num")
@@ -418,7 +414,6 @@ def calcular_score_risco_base(campos_num: Dict[str, Optional[float]], observacoe
         add = min(4, pontos); score += add; trace.append(f"Keywords observações (+{add})")
     return score
 
-
 def risco_por_indices(ind: Dict[str, Optional[float]], trace: List[str]) -> float:
     score = 0.0
     def add(k: str, v: Optional[float]):
@@ -430,7 +425,6 @@ def risco_por_indices(ind: Dict[str, Optional[float]], trace: List[str]) -> floa
     for k in ("isp", "idp", "idco", "idb"):
         add(k, ind.get(k))
     return score
-
 
 def risco_por_cronograma(tarefas: List[Dict[str, Any]], trace: List[str]) -> float:
     score = 0.0
@@ -448,7 +442,6 @@ def risco_por_cronograma(tarefas: List[Dict[str, Any]], trace: List[str]) -> flo
             score += 1; trace.append(f"Tarefa crítica <30%: {t.get('nome','')} (+1)")
     return score
 
-
 def risco_por_baseline_financeiro(baseline: Dict[str, Any], fin: Dict[str, Any], trace: List[str]) -> float:
     score = 0.0
     capex_aprovado = to_number((baseline.get("custo") or {}).get("capex_aprovado"))
@@ -463,7 +456,6 @@ def risco_por_baseline_financeiro(baseline: Dict[str, Any], fin: Dict[str, Any],
         score += 2; trace.append("Comprometido > Aprovado: +2")
     return score
 
-
 def classificar_risco(score: float) -> str:
     if score >= RISK_HIGH_THRESHOLD:
         return "Alto"
@@ -471,7 +463,6 @@ def classificar_risco(score: float) -> str:
         return "Médio"
     else:
         return "Baixo"
-
 
 def inferir_pilar(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]], indicadores: Dict[str, Optional[float]], trace: List[str]) -> Optional[str]:
     obs = normalize(campos.get("observacoes", ""))
@@ -504,7 +495,6 @@ def inferir_pilar(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]]
     trace.append(f"ECK sugerido: {sugerido} (scores: E={score_exc}, C={score_cli}, K={score_cap})")
     return sugerido
 
-
 def justificativa_pilar_eck(pilar: str) -> str:
     p = normalize(pilar)
     if "excelencia" in p:
@@ -518,7 +508,6 @@ def justificativa_pilar_eck(pilar: str) -> str:
                 "com disciplina de capital e seleção criteriosa (VPL/TIR ajustadas a risco).")
     return f"Pilar declarado: {pilar}"
 
-
 def split_stakeholders(stakeholders: str) -> List[str]:
     if not stakeholders or stakeholders == "Não informado":
         return []
@@ -530,7 +519,6 @@ def split_stakeholders(stakeholders: str) -> List[str]:
     if not parts:
         parts = [stakeholders.strip()]
     return [p for p in parts if p]
-
 
 def gerar_proximos_passos(cpi: Optional[float], spi: Optional[float], gap_pf: Optional[float], obs: str, pilar_final: str, stakeholders: str) -> List[str]:
     passos: List[str] = []
@@ -569,7 +557,6 @@ def gerar_proximos_passos(cpi: Optional[float], spi: Optional[float], gap_pf: Op
         if it not in seen:
             seen.add(it); dedup.append(it)
     return dedup
-
 
 def listar_riscos(campos_num: Dict[str, Optional[float]], observacoes: str, indicadores: Dict[str, Optional[float]], tarefas: List[Dict[str, Any]], baseline: Dict[str, Any], fin: Dict[str, Any]) -> List[str]:
     riscos: List[str] = []
@@ -625,9 +612,7 @@ def listar_riscos(campos_num: Dict[str, Optional[float]], observacoes: str, indi
         if r not in seen:
             seen.add(r); out.append(r)
     return out
-
 # --- Strategy fit legado (mantido)
-
 def strategy_fit(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]], indicadores: Dict[str, Optional[float]]) -> Dict[str, Any]:
     if not FEATURES["enable_strategy_fit"]:
         return {"score": None, "pilar_sugerido": None, "justificativa": None}
@@ -657,7 +642,6 @@ def strategy_fit(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]],
     return {"score": score, "pilar_sugerido": pilar_sugerido, "justificativa": justificativa}
 
 # --- Nova: alinhamento estratégico corporativo
-
 def avaliar_alinhamento_estrategico(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]], indicadores: Dict[str, Optional[float]], pilar_sugerido: Optional[str]) -> Dict[str, Any]:
     cfg = load_strategy_config()
     temas = cfg.get("temas", {})
@@ -724,7 +708,6 @@ def avaliar_alinhamento_estrategico(campos: Dict[str, Any], campos_num: Dict[str
     }
 
 # --- Lições aprendidas (mantém, com cortes no LEAN)
-
 def gerar_licoes_aprendidas(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]], kpis: Dict[str, Any], tarefas: List[Dict[str, Any]], riscos_chave: List[str]) -> List[Dict[str, str]]:
     if not FEATURES["enable_lessons_learned"]:
         return []
@@ -767,27 +750,48 @@ def gerar_licoes_aprendidas(campos: Dict[str, Any], campos_num: Dict[str, Option
     return itens[:5]
 
 # ------------------------------
-# Formatação (LEAN por padrão)
+# Formatação (LEAN por padrão) — HOTFIX aplicado aqui
 # ------------------------------
+def format_report(campos: Dict[str, Any],
+                  campos_num: Dict[str, Optional[float]],
+                  score: float,
+                  risco: str,
+                  pilar_declarado: str,
+                  pilar_final: str,
+                  justificativa_eck_txt: str,
+                  proximos_passos_recomendado: List[str],
+                  proximos_passos_atual: List[str],
+                  kpis: Dict[str, Any],
+                  riscos_chave: List[str],
+                  divergente: bool,
+                  pilar_sugerido: Optional[str],
+                  justificativa_sugerido: Optional[str],
+                  strategy: Dict[str, Any],
+                  licoes: List[Dict[str, str]],
+                  alinhamento: Dict[str, Any],
+                  decisao: str) -> Dict[str, str]:
 
-def format_report(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]], score: float, risco: str,
-                  pilar_declarado: str, pilar_final: str, justificativa_eck_txt: str,
-                  proximos_passos_recomendado: List[str], proximos_passos_atual: List[str],
-                  kpis: Dict[str, Any], riscos_chave: List[str], divergente: bool,
-                  pilar_sugerido: Optional[str], justificativa_sugerido: Optional[str],
-                  strategy: Dict[str, Any], licoes: List[Dict[str, str]],
-                  alinhamento: Dict[str, Any], decisao: str) -> Dict[str, str]:
     nome = campos.get("nome_projeto", "Projeto não identificado") or "Projeto não identificado"
-    cpi = campos.get("cpi", "Não informado"); spi = campos.get("spi", "Não informado")
-    fisico = campos.get("avanco_fisico", "Não informado"); financeiro_pf = campos.get("avanco_financeiro", "Não informado")
-    contrato = campos.get("tipo_contrato", "Não informado"); stakeholders = campos.get("stakeholders", "Não informado")
+    cpi = campos.get("cpi", "Não informado")
+    spi = campos.get("spi", "Não informado")
+    fisico = campos.get("avanco_fisico", "Não informado")
+    financeiro_pf = campos.get("avanco_financeiro", "Não informado")
+    contrato = campos.get("tipo_contrato", "Não informado")
+    stakeholders = campos.get("stakeholders", "Não informado")
     observacoes = campos.get("observacoes", "Não informado")
     objetivo = campos.get("objetivo", "Não informado")
     escopo = campos.get("escopo", "Não informado")
-    ind = campos.get("indicadores") or {}
-    isp = ind.get("isp"); idp = ind.get("idp"); idco = ind.get("idco"); idb = ind.get("idb")
+
+    # HOTFIX: converter indicadores e financeiro para número aqui
+    ind_raw = campos.get("indicadores") or {}
+    isp = to_number(ind_raw.get("isp"))
+    idp = to_number(ind_raw.get("idp"))
+    idco = to_number(ind_raw.get("idco"))
+    idb = to_number(ind_raw.get("idb"))
+
     fin = campos.get("financeiro") or {}
-    eac = fin.get("eac"); vac = fin.get("vac")
+    eac = to_number(fin.get("eac"))
+    vac = to_number(fin.get("vac"))
 
     risco_emoji = {"Alto": "🔴", "Médio": "🟠", "Baixo": "🟢"}.get(risco, "⚠️")
 
@@ -829,8 +833,9 @@ def format_report(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]]
     if cpi != "Não informado": linha_inds.append(f"CPI {cpi}")
     if spi != "Não informado": linha_inds.append(f"SPI {spi}")
     if kpis.get("gap_pf") is not None: linha_inds.append(f"gap F×F {kpis['gap_pf']:.1f}pp")
-    if any(x is not None for x in (isp,idp,idco,idb)):
-        abaixo = [f"{lbl} {val:.2f}" for lbl,val in [("ISP",isp),("IDP",idp),("IDCo",idco),("IDB",idb)] if val is not None and val < 1.0]
+    if any(x is not None for x in (isp, idp, idco, idb)):
+        abaixo = [f"{lbl} {val:.2f}" for lbl, val in [("ISP", isp), ("IDP", idp), ("IDCo", idco), ("IDB", idb)]
+                 if val is not None and val < 1.0]
         if abaixo:
             linha_inds.append("Índices<1,00: " + ", ".join(abaixo))
     if linha_inds:
@@ -862,7 +867,6 @@ def format_report(campos: Dict[str, Any], campos_num: Dict[str, Optional[float]]
 # ------------------------------
 # Core: _analisar
 # ------------------------------
-
 def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
     trace: List[str] = []
     campos_num = {
@@ -950,7 +954,7 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     payload_out = {
-        "versao_api": "1.5.0",
+        "versao_api": "1.5.1",
         "campos_interpretados": {**campos, **campos_num, "pilar_final": pilar_final},
         "indicadores": indicadores,
         "kpis": kpis,
@@ -976,7 +980,6 @@ def _analisar(campos: Dict[str, Any]) -> Dict[str, Any]:
 # ------------------------------
 # Endpoints
 # ------------------------------
-
 @app.get("/health")
 def health():
     return {"status": "ok", "version": app.version, "risk_high_threshold": RISK_HIGH_THRESHOLD, "report_mode": REPORT_MODE}
